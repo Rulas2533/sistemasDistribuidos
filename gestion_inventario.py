@@ -239,7 +239,85 @@ class GestionInventario:
                     print("-" * 30)
             else:
                 print(f"No se encontraron guías para la sucursal {sucursal_origen_id} en la fecha {fecha}.")
+    # ---- Métodos para compra con exclusión mutua ----
+    
+    def verificar_stock_local(self, sucursal_id, articulo_id):
+        """
+        Verifica el stock disponible de un artículo en una sucursal específica.
+        Devuelve la cantidad disponible o None si el artículo no existe.
+        """
+        query = """
+        SELECT cantidad FROM articulos_por_sucursal 
+        WHERE sucursal_id = %s AND articulo_id = %s"""
+        try:
+            rows = self.db_ops.session.execute(query, [uuid.UUID(sucursal_id), uuid.UUID(articulo_id)])
+            return rows[0].cantidad if rows else None
+        except Exception as e:
+            print(f"Error al verificar stock: {str(e)}")
+            return None
 
+    def actualizar_stock(self, sucursal_id, articulo_id, cantidad, tipo_operacion):
+        """
+        Actualiza el stock con verificación de concurrencia.
+        tipo_operacion: "VENTA" o "COMPRA"
+        Devuelve True si la operación fue exitosa, False si falló.
+        """
+        try:
+            if tipo_operacion == "VENTA":
+                query = """
+                UPDATE articulos_por_sucursal 
+                SET cantidad = cantidad - %s 
+                WHERE sucursal_id = %s AND articulo_id = %s IF cantidad >= %s"""
+            else:  # COMPRA
+                query = """
+                UPDATE articulos_por_sucursal 
+                SET cantidad = cantidad + %s 
+                WHERE sucursal_id = %s AND articulo_id = %s"""
+            
+            result = self.db_ops.session.execute(query, [
+                cantidad,
+                uuid.UUID(sucursal_id),
+                uuid.UUID(articulo_id),
+                cantidad if tipo_operacion == "VENTA" else None
+            ])
+            
+            if tipo_operacion == "VENTA":
+                return result.one().applied
+            return True
+        except Exception as e:
+            print(f"Error al actualizar stock: {str(e)}")
+            return False
+
+    def registrar_transaccion(self, sucursal_id, articulo_id, cantidad, tipo, estado="COMPLETADA"):
+        """
+        Registra una transacción en el sistema.
+        Devuelve el ID de la transacción o None si falló.
+        """
+        query = """
+        INSERT INTO transacciones (
+            transaccion_id,
+            sucursal_id,
+            articulo_id,
+            cantidad,
+            tipo,
+            fecha_hora,
+            estado
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s)"""
+        try:
+            transaccion_id = uuid.uuid4()
+            self.db_ops.session.execute(query, [
+                transaccion_id,
+                uuid.UUID(sucursal_id),
+                uuid.UUID(articulo_id),
+                cantidad,
+                tipo,
+                datetime.datetime.now(),
+                estado
+            ])
+            return transaccion_id
+        except Exception as e:
+            print(f"Error al registrar transacción: {str(e)}")
+            return None
 if __name__ == "__main__":
     # Asegúrate de que Cassandra esté corriendo y que hayas ejecutado schema.cql y test_data.cql
     # antes de ejecutar este script.
