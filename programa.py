@@ -83,15 +83,25 @@ def handle_connection(client_socket, my_id):
     try:
         message_data = client_socket.recv(1024).decode('utf-8')
         if message_data:
-            sender_id, message_with_timestamp = message_data.split(":", 1)
-            timestamp, message = message_with_timestamp.split("||", 1)
-            full_message = f"[{get_timestamp()}] Nodo {sender_id}: {message}"
-            print(full_message)
-            store_message(f"[{timestamp}] Nodo {sender_id}: {message} (Recibido)")
-            response = f"Recibido por Nodo {my_id} a las {get_timestamp()}"
+            # Mensajes normales (chat)
+            if "||" in message_data:
+                sender_id, message_with_timestamp = message_data.split(":", 1)
+                timestamp, message = message_with_timestamp.split("||", 1)
+                print(f"[{get_timestamp()}] Nodo {sender_id}: {message}")
+                response = f"Recibido por Nodo {my_id}"
+            
+            # Mensajes de BLOQUEO para compras
+            elif message_data.startswith("BLOQUEO_COMPRA:"):
+                _, nodo_solicitante, articulo_id, cantidad = message_data.split(":")
+                stock = gestion.verificar_stock_local(sucursal_id, articulo_id)
+                response = "APROBADO" if stock and stock >= int(cantidad) else "RECHAZADO"
+            
+            else:
+                response = "MENSAJE_NO_RECONOCIDO"
+            
             client_socket.sendall(response.encode('utf-8'))
     except Exception as e:
-        print(f"Nodo {my_id}: Error al recibir mensaje: {e}")
+        print(f"Error en conexión: {str(e)}")
     finally:
         client_socket.close()
 
@@ -148,7 +158,38 @@ def actualizar_cliente():
         print("Datos ingresados no válidos.")
 
 def comprar_articulo():
-    print("[Funcionalidad en desarrollo] Comprar artículo con exclusión mutua")
+    try:
+        print("\n=== COMPRAR ARTÍCULO ===")
+        gestion.consultar_inventario_local(sucursal_id)
+        
+        articulo_id = input("ID del artículo a comprar: ").strip()
+        cantidad = int(input("Cantidad a comprar: "))
+        
+        print("\nVerificando disponibilidad en otras sucursales...")
+        mensaje_bloqueo = f"BLOQUEO_COMPRA:{MY_ID}:{articulo_id}:{cantidad}"
+        respuestas = {}
+        
+        for node_id, (ip, port) in ALL_NODES_INFO.items():
+            if node_id != MY_ID:
+                try:
+                    send_message(MY_ID, node_id, ip, port, mensaje_bloqueo)
+                    respuestas[node_id] = True
+                except:
+                    respuestas[node_id] = False
+        
+        if not all(respuestas.values()):
+            print("No se pudo confirmar disponibilidad. Abortando...")
+            return
+        
+        if gestion.actualizar_stock(sucursal_id, articulo_id, cantidad, "VENTA"):
+            print("¡Compra exitosa! Stock actualizado.")
+        else:
+            print("Error: No hay suficiente stock o el artículo no existe.")
+            
+    except ValueError:
+        print("Error: Ingresa una cantidad válida (número entero).")
+    except Exception as e:
+        print(f"Error inesperado: {str(e)}")
 
 def ver_guias_envio():
     print("[Funcionalidad en desarrollo] Ver guías de envío generadas")
