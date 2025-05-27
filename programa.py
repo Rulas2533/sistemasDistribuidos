@@ -83,12 +83,35 @@ def handle_connection(client_socket, my_id):
     try:
         message_data = client_socket.recv(1024).decode('utf-8')
         if message_data:
-            sender_id, message_with_timestamp = message_data.split(":", 1)
-            timestamp, message = message_with_timestamp.split("||", 1)
-            full_message = f"[{get_timestamp()}] Nodo {sender_id}: {message}"
-            print(full_message)
-            store_message(f"[{timestamp}] Nodo {sender_id}: {message} (Recibido)")
-            response = f"Recibido por Nodo {my_id} a las {get_timestamp()}"
+            # Mensajes normales de chat
+            if "||" in message_data:
+                sender_id, message_with_timestamp = message_data.split(":", 1)
+                timestamp, message = message_with_timestamp.split("||", 1)
+                full_message = f"[{get_timestamp()}] Nodo {sender_id}: {message}"
+                print(full_message)
+                store_message(f"[{timestamp}] Nodo {sender_id}: {message} (Recibido)")
+                response = f"Recibido por Nodo {my_id} a las {get_timestamp()}"
+            
+            # Mensajes para comprar artículos
+            elif message_data.startswith("RESERVAR:"):
+                _, articulo_id, cantidad = message_data.split(":")
+                if gestion.verificar_stock_local(sucursal_id, articulo_id) >= int(cantidad):
+                    response = "APROBADO"
+                else:
+                    response = "DENEGADO"
+            
+            # Mensajes de nodos caídos
+            elif message_data.startswith("NODO_CAIDO:"):
+                _, sucursal_fallida = message_data.split(":")
+                print(f"\n¡ALERTA! La sucursal {sucursal_fallida} ha fallado.")
+                if gestion.marcar_sucursal_inactiva(sucursal_fallida):
+                    response = "SUCURSAL_MARCADA_COMO_INACTIVA"
+                else:
+                    response = "ERROR_AL_MARCAR"
+            
+            else:
+                response = "MENSAJE_DESCONOCIDO"
+            
             client_socket.sendall(response.encode('utf-8'))
     except Exception as e:
         print(f"Nodo {my_id}: Error al recibir mensaje: {e}")
@@ -146,9 +169,39 @@ def actualizar_cliente():
         )
     except ValueError:
         print("Datos ingresados no válidos.")
-
 def comprar_articulo():
-    print("[Funcionalidad en desarrollo] Comprar artículo con exclusión mutua")
+    try:
+        print("\n=== COMPRAR ARTÍCULO ===")
+        gestion.consultar_inventario_local(sucursal_id)
+        
+        articulo_id = input("ID del artículo a comprar: ").strip()
+        cantidad = int(input("Cantidad a comprar: "))
+        
+        print("\nVerificando disponibilidad en otras sucursales...")
+        mensaje_bloqueo = f"BLOQUEO_COMPRA:{MY_ID}:{articulo_id}:{cantidad}"
+        respuestas = {}
+        
+        for node_id, (ip, port) in ALL_NODES_INFO.items():
+            if node_id != MY_ID:
+                try:
+                    send_message(MY_ID, node_id, ip, port, mensaje_bloqueo)
+                    respuestas[node_id] = True
+                except:
+                    respuestas[node_id] = False
+        
+        if not all(respuestas.values()):
+            print("No se pudo confirmar disponibilidad. Abortando...")
+            return
+        
+        if gestion.actualizar_stock(sucursal_id, articulo_id, cantidad, "VENTA"):
+            print("¡Compra exitosa! Stock actualizado.")
+        else:
+            print("Error: No hay suficiente stock o el artículo no existe.")
+            
+    except ValueError:
+        print("Error: Ingresa una cantidad válida (número entero).")
+    except Exception as e:
+        print(f"Error inesperado: {str(e)}")
 
 def ver_guias_envio():
     print("[Funcionalidad en desarrollo] Ver guías de envío generadas")
@@ -177,7 +230,25 @@ def ver_guias_envio():
         print("Opción no válida.")
 
 def simular_falla_sucursal():
-    print("[Funcionalidad en desarrollo] Simular falla de sucursal")
+    print("\n=== SIMULAR FALLA ===")
+    print("1. Fallar ESTA sucursal")
+    print("2. Fallar OTRA sucursal")
+    opcion = input("Elige (1 o 2): ")
+    
+    if opcion == "1":
+        print("¡Esta sucursal se apagará!")
+        time.sleep(2)
+        sys.exit(0)
+    elif opcion == "2":
+        print("Sucursales disponibles:")
+        for node_id in ALL_NODES_INFO:
+            if node_id != MY_ID:
+                print(f"- {node_id}")
+        
+        sucursal = input("ID de sucursal a fallar: ")
+        print(f"¡Simulando falla en {sucursal}!")
+    else:
+        print("Opción incorrecta")
 
 def forzar_eleccion_maestro():
     print("[Funcionalidad en desarrollo] Forzar elección de nuevo nodo maestro")
